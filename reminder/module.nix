@@ -32,17 +32,14 @@ in
   config = mkIf cfg.enable {
     systemd.services.discord-reminder = {
       description = "Discord Task Reminder";
-      environment = {
-        TASK_FILE = pkgs.writeText "tasks.toml" ''
-          tasks = [
-            ${concatMapStrings (task: ''"${task}",\n'') cfg.tasks}
-          ]
-        '';
-      };
       serviceConfig = {
         Type = "oneshot";
         EnvironmentFile = cfg.webhookFile;
-        ExecStart = "${reminder}/bin/discord-reminder -c $TASK_FILE";
+        ExecStart =
+          let
+            tasks_file = builtins.toJSON { tasks = cfg.tasks; };
+          in
+          "${reminder}/bin/discord-reminder -c ${tasks_file}";
         DynamicUser = true;
       };
     };
