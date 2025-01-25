@@ -37,7 +37,7 @@ in
         EnvironmentFile = cfg.webhookFile;
         ExecStart =
           let
-            tasks_file = builtins.toJSON { tasks = cfg.tasks; };
+            tasks_file = pkgs.writeText "tasks.json" (builtins.toJSON { tasks = cfg.tasks; });
           in
           "${reminder}/bin/discord-reminder -c ${tasks_file}";
         DynamicUser = true;
