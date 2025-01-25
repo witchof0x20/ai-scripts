@@ -10,8 +10,6 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        python = pkgs.python3;
-        pythonPkgs = python.pkgs;
       in
       {
         packages.cal-upload = pkgs.callPackage ./cal-upload/default.nix { };

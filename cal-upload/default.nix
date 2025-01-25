@@ -1,5 +1,5 @@
-{ pkgs, python }:
-let pythonPkgs = python.pkgs; in
+{ pkgs, python3 }:
+let pythonPkgs = python3.pkgs; in
 pythonPkgs.buildPythonApplication {
   pname = "cal-upload";
   version = "0.1.0";
