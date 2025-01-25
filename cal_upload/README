@@ -1,0 +1,4 @@
+Copies a CALDAV file from the clipboard to a nextcloud instance. Stores password in a config file in plaintext (use an app password or add a vault or something) 
+
+
+written by claude lol
