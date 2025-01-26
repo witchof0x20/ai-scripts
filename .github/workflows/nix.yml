@@ -1,0 +1,16 @@
+name: Build
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nixbuild/nix-quick-install-action@v29
+      - name: Check flake outputs
+        run: nix flake check
+      - name: Build cal-upload 
+        run: nix build .#cal-upload
+      - name: Build reminder 
+        run: nix build .#reminder
+      - name: Build ffxiv-otp
+        run: nix build .#ffxiv-otp
