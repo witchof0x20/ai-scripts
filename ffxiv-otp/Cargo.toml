@@ -1,0 +1,12 @@
+[package]
+name = "ffxiv-otp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.27", features = ["derive"] }
+serde = { version = "1.0.217", features = ["derive"] }
+toml = "0.8.19"
+totp-rs = "5.6.0"
+ureq = "2.12.1"
+xdg = "2.5.2"
