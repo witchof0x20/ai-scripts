@@ -1,3 +1,5 @@
 __pycache__
 *.txt
+*.toml
+*.json
 .mypy_cache
