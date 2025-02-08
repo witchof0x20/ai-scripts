@@ -168,88 +168,34 @@ class OfficeHoursScheduler:
     def _find_best_blocks(
         self, hours_needed: int, staff_member: StaffMember
     ) -> List[Tuple[str, int, int]]:
-        """Find best contiguous blocks maximizing student coverage."""
-        best_blocks = []
-        business_days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+        """Find best time slots maximizing student coverage."""
+        best_slots = []
         remaining_hours = hours_needed
 
-        # Track day usage globally
-        day_usage = defaultdict(int)
-        for slot in self.used_slots:
-            day_usage[slot.day] += 1
-
-        # Try to allocate blocks to unused days first
-        for day in business_days:
-            if remaining_hours <= 0:
-                break
-
-            if day in {block[0] for block in best_blocks}:
-                continue
-
-            if day_usage[day] <= min(day_usage.values()):
-                best_score = -float("inf")
-                best_block = None
-                target_hours = min(remaining_hours, 3)
-
-                for start_hour in range(
-                    staff_member.start_hour,
-                    min(staff_member.end_hour - target_hours + 1, 21),
-                ):
-                    slots = self._find_contiguous_block(
-                        day, start_hour, staff_member, target_hours
-                    )
-                    if slots:
-                        score = self._get_coverage_score(slots)
-                        if score > best_score:
-                            best_score = score
-                            best_block = (
-                                day,
-                                start_hour,
-                                start_hour + len(slots),
-                                slots,
-                            )
-
-                if best_block:
-                    day, start, end, slots = best_block
-                    best_blocks.append((day, start, end))
-                    self.used_slots.update(slots)
-                    self._update_coverage(slots)
-                    remaining_hours -= end - start
-                    day_usage[day] += 1
-
-        # Fill remaining hours
         while remaining_hours > 0:
-            best_score = -float("inf")
-            best_block = None
+            max_coverage = -float("inf")
+            best_slot = None
 
-            for day in business_days:
-                for start_hour in range(
-                    staff_member.start_hour, min(staff_member.end_hour, 21)
-                ):
-                    slots = self._find_contiguous_block(
-                        day, start_hour, staff_member, remaining_hours
-                    )
-                    if slots:
-                        score = self._get_coverage_score(slots) - (day_usage[day] * 2)
-                        if score > best_score:
-                            best_score = score
-                            best_block = (
-                                day,
-                                start_hour,
-                                start_hour + len(slots),
-                                slots,
-                            )
+            for day, slots in self.slots.items():
+                for slot in slots:
+                    if not self._is_valid_time(slot):
+                        continue
+                    if not self._is_staff_available(slot, staff_member):
+                        continue
+                    if slot in self.used_slots:
+                        continue
 
-            if best_block:
-                day, start, end, slots = best_block
-                if end - start > remaining_hours:
-                    end = start + remaining_hours
-                    slots = slots[:remaining_hours]
-                best_blocks.append((day, start, end))
-                self.used_slots.update(slots)
-                self._update_coverage(slots)
-                remaining_hours -= end - start
-                day_usage[day] += 1
+                    # Calculate coverage score based on available students
+                    coverage = len(slot.available_students - self.covered_students)
+                    if coverage > max_coverage:
+                        max_coverage = coverage
+                        best_slot = slot
+
+            if best_slot:
+                best_slots.append((best_slot.day, best_slot.hour, best_slot.hour + 1))
+                self.used_slots.add(best_slot)
+                self._update_coverage([best_slot])
+                remaining_hours -= 1
             else:
                 logging.warning(
                     f"Could not fill all hours for {staff_member.name}. "
@@ -257,7 +203,7 @@ class OfficeHoursScheduler:
                 )
                 break
 
-        return best_blocks
+        return best_slots
 
     def _update_coverage(self, slots: List[TimeSlot]):
         """Update the set of covered students after selecting slots."""

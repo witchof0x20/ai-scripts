@@ -1,17 +1,14 @@
-# parse.py
-from typing import Dict, List, Set
 from bs4 import BeautifulSoup
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Dict, List, Set
 import logging
-
 
 @dataclass
 class Student:
     id: str
     name: str
-
 
 @dataclass
 class TimeSlot:
@@ -23,7 +20,7 @@ class TimeSlot:
     cant_count: int
 
     def __str__(self):
-        return f"{self.day} {time(self.hour, self.minute).strftime('%I:%M %p')}"
+        return f"{self.day} {datetime(1900, 1, 1, self.hour, self.minute).strftime('%I:%M %p')}"
 
     def availability_score(self):
         return (
@@ -56,7 +53,6 @@ class TimeSlot:
         }
         return (day_order.get(self.day, 7), self.hour, self.minute)
 
-
 def parse_whenisigood(html_file: str) -> Dict[str, List[TimeSlot]]:
     """Parse WhenIsGood HTML file to get student availability."""
     with open(html_file, "r") as f:
@@ -67,11 +63,6 @@ def parse_whenisigood(html_file: str) -> Dict[str, List[TimeSlot]]:
 
     soup = BeautifulSoup(html_content, "html.parser")
     logging.debug(f"Parsing HTML content of length: {len(html_content)}")
-
-    # First validate we can find the main table
-    grid_table = soup.find("table", id="grid")
-    if not grid_table:
-        raise ValueError("Could not find the main grid table in HTML")
 
     slots_by_day = defaultdict(list)
 
@@ -132,7 +123,7 @@ def parse_whenisigood(html_file: str) -> Dict[str, List[TimeSlot]]:
                 continue
             day = day_headers[day_idx].text.strip()
 
-            # Get number of students who can't make it
+            # Get number of students who can't make it 
             cant_count = int(td.find("td", class_="cantCount").text.strip())
 
             # The students who can make it are total_respondents - cant_count
@@ -145,15 +136,15 @@ def parse_whenisigood(html_file: str) -> Dict[str, List[TimeSlot]]:
 
             slot = TimeSlot(
                 day=day,
-                hour=time_obj.hour,
+                hour=time_obj.hour, 
                 minute=time_obj.minute,
                 available_students=available_students,
                 total_students=total_respondents,
-                cant_count=cant_count,
+                cant_count=cant_count
             )
             slots_by_day[day].append(slot)
-
-    # Sort slots within each day
+            
+    # Sort slots within each day        
     for day in slots_by_day:
         slots_by_day[day].sort(key=lambda x: (x.hour, x.minute))
 
