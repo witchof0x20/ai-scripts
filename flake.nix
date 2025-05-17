@@ -1,5 +1,5 @@
 {
-  description = "Nextcloud Calendar Event Uploader";
+  description = "AI tools";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
@@ -26,19 +26,24 @@
           };
         };
       in
-      {
+      rec {
         packages.cal-upload = pkgs.callPackage ./cal-upload/default.nix { };
         packages.reminder = pkgs.callPackage ./reminder/default.nix { };
         packages.ffxiv-otp = naersk'.buildPackage {
           nativeBuildInputs = deps.ffxiv-otp.nativeBuildInputs;
           src = ./ffxiv-otp;
         };
-
+        packages.gradescope-api = pkgs.callPackage ./gradescope-utils/gradescope-api.nix { };
         devShells.ffxiv-otp = pkgs.mkShell {
           nativeBuildInputs = deps.ffxiv-otp.nativeBuildInputs ++ [
             (rust_toolchain.default.override {
               extensions = [ "rust-src" "rustfmt" "rust-analyzer" "clippy" ];
             })
+          ];
+        };
+        devShells.gradescope-utils = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            (python3.withPackages (ps: [ packages.gradescope-api ]))
           ];
         };
       }

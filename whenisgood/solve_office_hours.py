@@ -1,13 +1,29 @@
+#!/usr/bin/env python3
+"""
+Office hours scheduler that optimizes coverage of student availability while respecting instructor constraints.
+Supports guaranteed (fixed) office hours blocks and unavailable time blocks.
+"""
+
 import json
 import tomllib
 from datetime import datetime
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, DefaultDict
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
-def load_data(respondents_file, instructors_file):
+def load_data(respondents_file: str, instructors_file: str) -> Tuple[Dict, Dict]:
+    """
+    Load student availability data from JSON and instructor constraints from TOML.
+
+    Args:
+        respondents_file: Path to JSON file with student availability data
+        instructors_file: Path to TOML file with instructor constraints
+
+    Returns:
+        Tuple of (respondents data dict, instructors data dict)
+    """
     with open(respondents_file, "r") as f:
         respondents = json.load(f)
     with open(instructors_file, "rb") as f:
@@ -15,10 +31,25 @@ def load_data(respondents_file, instructors_file):
     return respondents, instructors
 
 
-def process_availabilities(respondents):
-    availability_by_time = {}
-    student_counts = defaultdict(int)
-    time_students = defaultdict(set)
+def process_availabilities(
+    respondents: Dict,
+) -> Tuple[Dict[Tuple[str, int], List[str]], Dict[Tuple[str, int], int], int]:
+    """
+    Process raw respondent data into availability mappings.
+
+    Args:
+        respondents: Dict of student availability data
+
+    Returns:
+        Tuple of (
+            availability by time slot mapping,
+            student count by time slot mapping,
+            total number of students
+        )
+    """
+    availability_by_time: Dict[Tuple[str, int], List[str]] = {}
+    student_counts: DefaultDict[Tuple[str, int], int] = defaultdict(int)
+    time_students: DefaultDict[Tuple[str, int], Set[str]] = defaultdict(set)
     total_students = len(respondents)
 
     for student_id, student_data in respondents.items():
@@ -40,17 +71,45 @@ def process_availabilities(respondents):
     return availability_by_time, dict(student_counts), total_students
 
 
-def get_instructor_constraints(instructors_data):
-    constraints = {"hours": {}, "unavailable": defaultdict(set)}
+def get_instructor_constraints(instructors_data: Dict) -> Dict:
+    """
+    Process instructor constraints from TOML data.
 
-    for instructor, data in instructors_data["instructors"].items():
-        constraints["hours"][instructor] = {
-            "start": data["start"],
-            "end": data["end"],
-            "max_hours": data["max_hours"],
-            "max_length": data["max_length"],
+    Args:
+        instructors_data: Dict of instructor constraints from TOML
+
+    Returns:
+        Dict containing processed constraints including hours, unavailable times,
+        and guaranteed slots
+    """
+    constraints = {
+        "hours": {},
+        "unavailable": defaultdict(set),
+        "guaranteed": defaultdict(list),
+    }
+
+    # Process instructor hours and guaranteed times
+    for instructor_key, instructor_data in instructors_data["instructors"].items():
+        # Handle both flat and nested table formats
+        if isinstance(instructor_data, dict):
+            base_data = instructor_data
+        else:
+            base_data = instructors_data["instructors"][instructor_key]
+
+        constraints["hours"][instructor_key] = {
+            "start": base_data["start"],
+            "end": base_data["end"],
+            "max_hours": base_data["max_hours"],
+            "max_length": base_data["max_length"],
         }
 
+        # Process guaranteed hours if present
+        if "guaranteed" in base_data:
+            for slot in base_data["guaranteed"]:
+                block = (slot["day"], slot["start"], slot["end"])
+                constraints["guaranteed"][instructor_key].append(block)
+
+    # Process unavailable times
     all_unavailable = instructors_data["unavailable"].get("all", [])
     for instructor in constraints["hours"]:
         instructor_unavailable = instructors_data["unavailable"].get(instructor, [])
@@ -61,14 +120,37 @@ def get_instructor_constraints(instructors_data):
     return constraints
 
 
-def is_time_valid(weekday, hour, instructor, constraints):
+def is_time_valid(weekday: str, hour: int, instructor: str, constraints: Dict) -> bool:
+    """
+    Check if a time slot is valid for an instructor given their constraints.
+
+    Args:
+        weekday: Day of the week
+        hour: Hour of the day (0-23)
+        instructor: Instructor name
+        constraints: Dict of instructor constraints
+
+    Returns:
+        Boolean indicating if the time slot is valid
+    """
     hours = constraints["hours"][instructor]
     if hour < hours["start"] or hour >= hours["end"]:
         return False
     return (weekday, hour) not in constraints["unavailable"][instructor]
 
 
-def find_continuous_blocks(times_list):
+def find_continuous_blocks(
+    times_list: List[Tuple[str, int]]
+) -> List[Tuple[str, int, int]]:
+    """
+    Convert a list of time slots into continuous blocks.
+
+    Args:
+        times_list: List of (weekday, hour) tuples
+
+    Returns:
+        List of (weekday, start_hour, end_hour) block tuples
+    """
     if not times_list:
         return []
 
@@ -91,8 +173,24 @@ def find_continuous_blocks(times_list):
     return blocks
 
 
-def find_continuous_block(valid_times, block_size, student_counts, scheduled_times):
-    """Find the best continuous block of specified size"""
+def find_continuous_block(
+    valid_times: List[Tuple[str, int]],
+    block_size: int,
+    student_counts: Dict[Tuple[str, int], int],
+    scheduled_times: Set[Tuple[str, int]],
+) -> List[Tuple[str, int]]:
+    """
+    Find the best continuous block of specified size from available times.
+
+    Args:
+        valid_times: List of valid (weekday, hour) tuples
+        block_size: Desired size of the continuous block
+        student_counts: Dict mapping time slots to number of available students
+        scheduled_times: Set of already scheduled time slots
+
+    Returns:
+        List of (weekday, hour) tuples forming the best block, or None if no valid block found
+    """
     best_block = None
     max_value = -1
 
@@ -122,9 +220,25 @@ def find_continuous_block(valid_times, block_size, student_counts, scheduled_tim
 
 
 def find_best_blocks(
-    valid_times, hours_needed, max_length, student_counts, scheduled_times
-):
-    """Find best combination of blocks respecting max daily hours"""
+    valid_times: List[Tuple[str, int]],
+    hours_needed: int,
+    max_length: int,
+    student_counts: Dict[Tuple[str, int], int],
+    scheduled_times: Set[Tuple[str, int]],
+) -> List[Tuple[str, int]]:
+    """
+    Find the best combination of blocks given constraints.
+
+    Args:
+        valid_times: List of valid (weekday, hour) tuples
+        hours_needed: Total hours needed to schedule
+        max_length: Maximum block length allowed
+        student_counts: Dict mapping time slots to number of available students
+        scheduled_times: Set of already scheduled time slots
+
+    Returns:
+        List of (weekday, hour) tuples forming the best blocks
+    """
     blocks = []
     remaining_hours = hours_needed
 
@@ -176,21 +290,90 @@ def find_best_blocks(
     return blocks
 
 
-def optimize_office_hours(availability_by_time, student_counts, constraints):
+def optimize_office_hours(
+    availability_by_time: Dict[Tuple[str, int], List[str]],
+    student_counts: Dict[Tuple[str, int], int],
+    constraints: Dict,
+) -> Tuple[Dict[str, List[Tuple[str, int, int]]], int]:
+    """
+    Optimize office hours schedule considering all constraints.
+
+    Args:
+        availability_by_time: Dict mapping time slots to available students
+        student_counts: Dict mapping time slots to number of available students
+        constraints: Dict of instructor constraints
+
+    Returns:
+        Tuple of (schedule dict mapping instructors to their blocks, number of students covered)
+    """
     schedule = {}
     all_covered_students = set()
     scheduled_times = set()
 
-    # Calculate average usage per time slot
+    # First, schedule all guaranteed hours
+    remaining_instructors = set(constraints["hours"].keys())
+
+    for instructor, guaranteed_blocks in constraints["guaranteed"].items():
+        if instructor not in remaining_instructors:
+            print(
+                f"Warning: Found guaranteed blocks for unknown instructor {instructor}"
+            )
+            continue
+
+        schedule[instructor] = []
+        total_max_hours = constraints["hours"][instructor]["max_hours"]
+        guaranteed_hours = 0
+
+        # Schedule all guaranteed blocks first
+        for weekday, start, end in guaranteed_blocks:
+            # Validate guaranteed block
+            block_length = end - start
+            if not all(
+                is_time_valid(weekday, hour, instructor, constraints)
+                for hour in range(start, end)
+            ):
+                print(
+                    f"Warning: Guaranteed block for {instructor} conflicts with constraints"
+                )
+                continue
+
+            schedule[instructor].append((weekday, start, end))
+            guaranteed_hours += block_length
+
+            # Add times to scheduled set
+            for hour in range(start, end):
+                time_slot = (weekday, hour)
+                scheduled_times.add(time_slot)
+                if time_slot in availability_by_time:
+                    all_covered_students.update(availability_by_time[time_slot])
+
+        # Update remaining hours
+        remaining_hours = total_max_hours - guaranteed_hours
+        if remaining_hours == 0:
+            # Remove instructor from further scheduling if all hours are guaranteed
+            remaining_instructors.remove(instructor)
+        elif remaining_hours < 0:
+            print(
+                f"Warning: {instructor} has more guaranteed hours ({guaranteed_hours}) than max_hours ({total_max_hours})"
+            )
+            remaining_instructors.remove(instructor)
+        else:
+            constraints["hours"][instructor]["max_hours"] = remaining_hours
+
+    # Calculate average usage per time slot for remaining scheduling
     time_values = {
         time: student_counts[time] / len(availability_by_time[time])
         for time in availability_by_time
     }
 
     # Sort instructors by order in TOML (seniority)
-    instructors = list(constraints["hours"].items())
+    instructors = [(name, constraints["hours"][name]) for name in remaining_instructors]
 
+    # Schedule remaining flexible hours
     for instructor, hours_data in instructors:
+        if instructor not in schedule:
+            schedule[instructor] = []
+
         valid_times = [
             (weekday, hour)
             for weekday in WEEKDAYS
@@ -212,7 +395,7 @@ def optimize_office_hours(availability_by_time, student_counts, constraints):
         )
 
         if selected_blocks:
-            schedule[instructor] = find_continuous_blocks(selected_blocks)
+            schedule[instructor].extend(find_continuous_blocks(selected_blocks))
             for time in selected_blocks:
                 all_covered_students.update(availability_by_time[time])
                 scheduled_times.add(time)
@@ -222,7 +405,16 @@ def optimize_office_hours(availability_by_time, student_counts, constraints):
     return schedule, len(all_covered_students)
 
 
-def validate_schedule(schedule, constraints):
+def validate_schedule(
+    schedule: Dict[str, List[Tuple[str, int, int]]], constraints: Dict
+) -> None:
+    """
+    Validate the generated schedule against all constraints.
+
+    Args:
+        schedule: Dict mapping instructors to their scheduled blocks
+        constraints: Dict of instructor constraints
+    """
     all_times = set()
     for instructor, blocks in schedule.items():
         # Check overlaps
@@ -232,6 +424,10 @@ def validate_schedule(schedule, constraints):
                 if time_slot in all_times:
                     print(f"Error: Overlapping office hours at {weekday} {hour}:00")
                 all_times.add(time_slot)
+
+        # Skip further validation for instructors with only guaranteed hours
+        if instructor not in constraints["hours"]:
+            continue
 
         # Check total hours and block lengths
         total_hours = sum(end - start for _, start, end in blocks)
@@ -261,7 +457,10 @@ def validate_schedule(schedule, constraints):
                     )
 
 
-def main():
+def main() -> None:
+    """
+    Main function: Load data, optimize schedule, and display results.
+    """
     respondents, instructors = load_data("respondents.json", "instructors.toml")
     availability_by_time, student_counts, total_students = process_availabilities(
         respondents
@@ -289,7 +488,7 @@ def main():
 
         for weekday, start, end in sorted_blocks:
             block_slots = sum(
-                student_counts[(weekday, hour)] for hour in range(start, end)
+                student_counts.get((weekday, hour), 0) for hour in range(start, end)
             )
             avg_utilization = block_slots / ((end - start) * total_students)
             print(

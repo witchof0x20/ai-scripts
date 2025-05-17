@@ -1,0 +1,57 @@
+name: Deploy API and Automate Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: continuous-integration
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v5
+        with:
+          # Install a specific version of uv.
+          version: "0.5.24"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Lint code check
+        run: uv run -- ruff check src tests
+
+      - name: Format code check
+        run: uv run -- ruff format --check src tests
+
+      - name: Format docs check
+        run: uv run -- mdformat --check docs README.md
+
+      - name: Run tests
+        # For example, using `pytest`
+        run: uv run pytest tests
+        env:
+          GRADESCOPE_CI_STUDENT_EMAIL: ${{ secrets.GRADESCOPE_CI_STUDENT_EMAIL }}
+          GRADESCOPE_CI_STUDENT_PASSWORD: ${{ secrets.GRADESCOPE_CI_STUDENT_PASSWORD }}
+          GRADESCOPE_CI_INSTRUCTOR_EMAIL: ${{ secrets.GRADESCOPE_CI_INSTRUCTOR_EMAIL }}
+          GRADESCOPE_CI_INSTRUCTOR_PASSWORD: ${{ secrets.GRADESCOPE_CI_INSTRUCTOR_PASSWORD }}
+          GRADESCOPE_CI_TA_EMAIL: ${{ secrets.GRADESCOPE_CI_TA_EMAIL }}
+          GRADESCOPE_CI_TA_PASSWORD: ${{ secrets.GRADESCOPE_CI_TA_PASSWORD }}
