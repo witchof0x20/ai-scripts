@@ -14,12 +14,12 @@ pub struct ChannelThresholds {
 impl Default for ChannelThresholds {
     fn default() -> Self {
         Self {
-            // DOCSIS 3.0/3.1 recommendations
+            // DOCSIS 3.0/3.1 recommendations (adjusted for your modem)
             downstream_snr_min: 33.0,           // Minimum 33 dB for good signal
-            downstream_signal_min: -7.0,        // -7 to +7 dBmV is typical
-            downstream_signal_max: 7.0,
-            upstream_signal_min: 38.0,          // 38-51 dBmV is typical
-            upstream_signal_max: 51.0,
+            downstream_signal_min: -9.0,        // Adjusted based on your modem
+            downstream_signal_max: 15.0,        // Adjusted based on your modem
+            upstream_signal_min: 37.0,          // Adjusted based on your modem
+            upstream_signal_max: 53.0,          // Adjusted based on your modem
             uncorrectable_error_increase: 100,  // Alert if uncorrectable errors increase by 100
         }
     }

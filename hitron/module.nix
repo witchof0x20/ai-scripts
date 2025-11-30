@@ -80,15 +80,15 @@ in
         EnvironmentFile = cfg.webhookFile;
         ExecStart =
           let
-            args = [ "--interval" (toString cfg.pollInterval) ]
-              ++ (optionals (cfg.roleId != null) [ "--role" (toString cfg.roleId) ])
-              ++ [ "--state-file" "%S/hitron-monitor/last-index" ]
-              ++ [ "--downstream-snr-min" (toString cfg.downstreamSnrMin) ]
-              ++ [ "--downstream-signal-min" (toString cfg.downstreamSignalMin) ]
-              ++ [ "--downstream-signal-max" (toString cfg.downstreamSignalMax) ]
-              ++ [ "--upstream-signal-min" (toString cfg.upstreamSignalMin) ]
-              ++ [ "--upstream-signal-max" (toString cfg.upstreamSignalMax) ]
-              ++ [ "--uncorrectable-error-increase" (toString cfg.uncorrectableErrorIncrease) ];
+            args = [ "--interval=${toString cfg.pollInterval}" ]
+              ++ (optionals (cfg.roleId != null) [ "--role=${toString cfg.roleId}" ])
+              ++ [ "--state-file=%S/hitron-monitor/last-index" ]
+              ++ [ "--downstream-snr-min=${toString cfg.downstreamSnrMin}" ]
+              ++ [ "--downstream-signal-min=${toString cfg.downstreamSignalMin}" ]
+              ++ [ "--downstream-signal-max=${toString cfg.downstreamSignalMax}" ]
+              ++ [ "--upstream-signal-min=${toString cfg.upstreamSignalMin}" ]
+              ++ [ "--upstream-signal-max=${toString cfg.upstreamSignalMax}" ]
+              ++ [ "--uncorrectable-error-increase=${toString cfg.uncorrectableErrorIncrease}" ];
             argString = concatStringsSep " " args;
           in
           "${hitron-monitor}/bin/hitron-monitor ${argString}";
