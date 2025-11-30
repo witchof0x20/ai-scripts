@@ -43,9 +43,11 @@ impl DiscordNotifier {
 
         let mut builder = ExecuteWebhook::new().embed(embed);
 
-        // Add role mention if specified
+        // Add role mention if specified, but not for Notice level events
         if let Some(role_id) = self.role_id {
-            builder = builder.content(format!("<@&{}>", role_id));
+            if event.priority != crate::api::EventPriority::Notice {
+                builder = builder.content(format!("<@&{}>", role_id));
+            }
         }
 
         self.webhook.execute(&self.http, false, builder).await?;
@@ -60,6 +62,7 @@ impl DiscordNotifier {
         }
 
         let mut embeds = Vec::new();
+        let mut has_non_notice = false;
         for event in events.iter().take(10) { // Discord allows max 10 embeds per message
             let color = match event.priority {
                 crate::api::EventPriority::Critical => 0xFF0000,
@@ -67,6 +70,11 @@ impl DiscordNotifier {
                 crate::api::EventPriority::Notice => 0x0099FF,
                 crate::api::EventPriority::Other => 0x808080,
             };
+
+            // Track if we have any non-Notice events
+            if event.priority != crate::api::EventPriority::Notice {
+                has_non_notice = true;
+            }
 
             let description = format!(
                 "**Time:** {}\n**Type:** {}\n**Event:** {}",
@@ -86,9 +94,11 @@ impl DiscordNotifier {
             builder = builder.embed(embed);
         }
 
-        // Add role mention if specified
+        // Add role mention if specified and at least one event is not Notice level
         if let Some(role_id) = self.role_id {
-            builder = builder.content(format!("<@&{}>", role_id));
+            if has_non_notice {
+                builder = builder.content(format!("<@&{}>", role_id));
+            }
         }
 
         self.webhook.execute(&self.http, false, builder).await?;
