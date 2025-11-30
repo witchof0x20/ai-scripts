@@ -55,57 +55,6 @@ impl DiscordNotifier {
         Ok(())
     }
 
-    /// Send multiple events in a single message
-    pub async fn send_events(&self, events: &[EventLog]) -> Result<()> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        let mut embeds = Vec::new();
-        let mut has_non_notice = false;
-        for event in events.iter().take(10) { // Discord allows max 10 embeds per message
-            let color = match event.priority {
-                crate::api::EventPriority::Critical => 0xFF0000,
-                crate::api::EventPriority::Warning => 0xFFA500,
-                crate::api::EventPriority::Notice => 0x0099FF,
-                crate::api::EventPriority::Other => 0x808080,
-            };
-
-            // Track if we have any non-Notice events
-            if event.priority != crate::api::EventPriority::Notice {
-                has_non_notice = true;
-            }
-
-            let description = format!(
-                "**Time:** {}\n**Type:** {}\n**Event:** {}",
-                event.time, event.event_type, event.event
-            );
-
-            embeds.push(
-                CreateEmbed::new()
-                    .title(format!("Modem Event: {}", event.priority))
-                    .color(color)
-                    .description(description)
-            );
-        }
-
-        let mut builder = ExecuteWebhook::new();
-        for embed in embeds {
-            builder = builder.embed(embed);
-        }
-
-        // Add role mention if specified and at least one event is not Notice level
-        if let Some(role_id) = self.role_id {
-            if has_non_notice {
-                builder = builder.content(format!("<@&{}>", role_id));
-            }
-        }
-
-        self.webhook.execute(&self.http, false, builder).await?;
-
-        Ok(())
-    }
-
     /// Send a channel anomaly alert to Discord
     pub async fn send_channel_alert(&self, anomaly: &ChannelAnomaly) -> Result<()> {
         // Determine color and title based on anomaly type
