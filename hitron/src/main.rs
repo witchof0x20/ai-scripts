@@ -144,8 +144,13 @@ async fn main() -> Result<()> {
                 if !new_events.is_empty() {
                     info!("Found {} new event(s) since last run", new_events.len());
                     for event in &new_events {
-                        if let Err(e) = notifier.send_event(event).await {
-                            error!("Failed to send event: {}", e);
+                        info!("Event: [{}] {} - {}", event.priority, event.event_type, event.event);
+
+                        // Only send non-Notice events to Discord webhook
+                        if event.priority != api::EventPriority::Notice {
+                            if let Err(e) = notifier.send_event(event).await {
+                                error!("Failed to send event: {}", e);
+                            }
                         }
                     }
                 } else {
@@ -154,9 +159,14 @@ async fn main() -> Result<()> {
             } else {
                 // First run - just send the most recent event
                 if let Some(most_recent) = events.first() {
-                    info!("First run - sending most recent event");
-                    if let Err(e) = notifier.send_event(most_recent).await {
-                        error!("Failed to send initial event: {}", e);
+                    info!("First run - most recent event: [{}] {} - {}",
+                          most_recent.priority, most_recent.event_type, most_recent.event);
+
+                    // Only send non-Notice events to Discord webhook
+                    if most_recent.priority != api::EventPriority::Notice {
+                        if let Err(e) = notifier.send_event(most_recent).await {
+                            error!("Failed to send initial event: {}", e);
+                        }
                     }
                 } else {
                     info!("No events found on startup");
@@ -208,8 +218,13 @@ async fn main() -> Result<()> {
                 if !new_events.is_empty() {
                     info!("Found {} new event(s)", new_events.len());
                     for event in &new_events {
-                        if let Err(e) = notifier.send_event(event).await {
-                            error!("Failed to send event: {}", e);
+                        info!("Event: [{}] {} - {}", event.priority, event.event_type, event.event);
+
+                        // Only send non-Notice events to Discord webhook
+                        if event.priority != api::EventPriority::Notice {
+                            if let Err(e) = notifier.send_event(event).await {
+                                error!("Failed to send event: {}", e);
+                            }
                         }
                     }
                 }
