@@ -124,6 +124,15 @@ pub struct EventLog {
     pub event: String,
 }
 
+impl EventLog {
+    /// Parse the timestamp from the event
+    /// Format: "MM/DD/YY HH:MM:SS"
+    pub fn parse_timestamp(&self) -> Result<chrono::NaiveDateTime> {
+        chrono::NaiveDateTime::parse_from_str(&self.time, "%m/%d/%y %H:%M:%S")
+            .map_err(|e| anyhow::anyhow!("Failed to parse timestamp '{}': {}", self.time, e))
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Menu {
     #[serde(flatten)]

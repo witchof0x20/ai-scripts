@@ -7,7 +7,8 @@ use std::time::Duration;
 use std::path::PathBuf;
 use tokio::time;
 use tokio::fs;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
+use chrono::NaiveDateTime;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Monitor Hitron modem event logs and send notifications to Discord", long_about = None)]
@@ -29,16 +30,16 @@ struct Args {
     state_file: Option<PathBuf>,
 }
 
-/// Load the last seen event index from the state file
-async fn load_last_seen_index(state_file: &Option<PathBuf>) -> Option<u32> {
+/// Load the last seen event timestamp from the state file
+async fn load_last_seen_timestamp(state_file: &Option<PathBuf>) -> Option<NaiveDateTime> {
     let path = state_file.as_ref()?;
 
     match fs::read_to_string(path).await {
         Ok(contents) => {
-            match contents.trim().parse::<u32>() {
-                Ok(index) => {
-                    debug!("Loaded last seen index: {}", index);
-                    Some(index)
+            match NaiveDateTime::parse_from_str(contents.trim(), "%m/%d/%y %H:%M:%S") {
+                Ok(timestamp) => {
+                    debug!("Loaded last seen timestamp: {}", timestamp);
+                    Some(timestamp)
                 }
                 Err(e) => {
                     error!("Failed to parse state file: {}", e);
@@ -53,16 +54,16 @@ async fn load_last_seen_index(state_file: &Option<PathBuf>) -> Option<u32> {
     }
 }
 
-/// Save the last seen event index to the state file
-async fn save_last_seen_index(state_file: &Option<PathBuf>, index: u32) -> Result<()> {
+/// Save the last seen event timestamp to the state file
+async fn save_last_seen_timestamp(state_file: &Option<PathBuf>, timestamp: &str) -> Result<()> {
     if let Some(path) = state_file {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
 
-        fs::write(path, index.to_string()).await?;
-        debug!("Saved last seen index: {}", index);
+        fs::write(path, timestamp).await?;
+        debug!("Saved last seen timestamp: {}", timestamp);
     }
     Ok(())
 }
@@ -84,16 +85,24 @@ async fn main() -> Result<()> {
         info!("State persistence enabled");
     }
 
-    // Load last seen event index from state file
-    let mut last_seen_index = load_last_seen_index(&args.state_file).await;
+    // Load last seen event timestamp from state file
+    let mut last_seen_timestamp = load_last_seen_timestamp(&args.state_file).await;
 
     // On startup, send new events since last run
     match api::get_event_log(&client).await {
         Ok(events) => {
-            if let Some(last_index) = last_seen_index {
+            if let Some(last_ts) = last_seen_timestamp {
                 // Find events newer than last seen
                 let new_events: Vec<_> = events.iter()
-                    .filter(|event| event.index > last_index)
+                    .filter(|event| {
+                        match event.parse_timestamp() {
+                            Ok(ts) => ts > last_ts,
+                            Err(e) => {
+                                warn!("Failed to parse timestamp for event: {}", e);
+                                false
+                            }
+                        }
+                    })
                     .collect();
 
                 if !new_events.is_empty() {
@@ -118,11 +127,13 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Update last seen index
+            // Update last seen timestamp
             if let Some(most_recent) = events.first() {
-                last_seen_index = Some(most_recent.index);
-                if let Err(e) = save_last_seen_index(&args.state_file, most_recent.index).await {
-                    error!("Failed to save state: {}", e);
+                if let Ok(ts) = most_recent.parse_timestamp() {
+                    last_seen_timestamp = Some(ts);
+                    if let Err(e) = save_last_seen_timestamp(&args.state_file, &most_recent.time).await {
+                        error!("Failed to save state: {}", e);
+                    }
                 }
             }
         }
@@ -140,10 +151,18 @@ async fn main() -> Result<()> {
         match api::get_event_log(&client).await {
             Ok(current_events) => {
                 // Find new events
-                let new_events: Vec<_> = if let Some(last_index) = last_seen_index {
+                let new_events: Vec<_> = if let Some(last_ts) = last_seen_timestamp {
                     // Filter events newer than last seen
                     current_events.iter()
-                        .filter(|event| event.index > last_index)
+                        .filter(|event| {
+                            match event.parse_timestamp() {
+                                Ok(ts) => ts > last_ts,
+                                Err(e) => {
+                                    warn!("Failed to parse timestamp for event: {}", e);
+                                    false
+                                }
+                            }
+                        })
                         .collect()
                 } else {
                     // No state - send all events
@@ -159,11 +178,13 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Update last seen index and save state
+                // Update last seen timestamp and save state
                 if let Some(most_recent) = current_events.first() {
-                    last_seen_index = Some(most_recent.index);
-                    if let Err(e) = save_last_seen_index(&args.state_file, most_recent.index).await {
-                        error!("Failed to save state: {}", e);
+                    if let Ok(ts) = most_recent.parse_timestamp() {
+                        last_seen_timestamp = Some(ts);
+                        if let Err(e) = save_last_seen_timestamp(&args.state_file, &most_recent.time).await {
+                            error!("Failed to save state: {}", e);
+                        }
                     }
                 }
             }
