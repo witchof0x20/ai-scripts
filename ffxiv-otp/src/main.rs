@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let code = totp.generate_current()?;
-
+    println!("Code is {code}");
     // Make HTTP request
     let url = format!("http://{}:4646/ffxivlauncher/{}", hostname, code);
     let client = reqwest::blocking::Client::new();
