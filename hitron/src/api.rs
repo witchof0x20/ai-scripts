@@ -33,6 +33,15 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
+/// Custom deserializer for converting string to u32
+fn deserialize_string_to_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
 // Endpoint structs
 
 #[derive(Debug, Deserialize, Clone)]
@@ -61,6 +70,11 @@ pub struct DocsisWan {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DownstreamChannel {
+    #[serde(rename = "portId", deserialize_with = "deserialize_string_to_u32")]
+    pub port_id: u32,
+    #[serde(deserialize_with = "deserialize_string_to_f64")]
+    pub frequency: f64,
+    pub modulation: String,
     #[serde(rename = "signalStrength", deserialize_with = "deserialize_string_to_f64")]
     pub signal_strength: f64,
     #[serde(deserialize_with = "deserialize_string_to_f64")]
@@ -69,8 +83,8 @@ pub struct DownstreamChannel {
     pub correcteds: i64,
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub uncorrect: i64,
-    #[serde(flatten)]
-    pub other_fields: serde_json::Value,
+    #[serde(rename = "channelId", deserialize_with = "deserialize_string_to_u32")]
+    pub channel_id: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -81,10 +95,18 @@ pub struct DownstreamOfdm {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UpstreamChannel {
+    #[serde(rename = "portId", deserialize_with = "deserialize_string_to_u32")]
+    pub port_id: u32,
+    #[serde(deserialize_with = "deserialize_string_to_f64")]
+    pub frequency: f64,
+    #[serde(rename = "bandwidth")]
+    pub bandwidth: String,
+    #[serde(rename = "modtype")]
+    pub modulation_type: String,
     #[serde(rename = "signalStrength", deserialize_with = "deserialize_string_to_f64")]
     pub signal_strength: f64,
-    #[serde(flatten)]
-    pub other_fields: serde_json::Value,
+    #[serde(rename = "channelId", deserialize_with = "deserialize_string_to_u32")]
+    pub channel_id: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -173,8 +195,15 @@ pub async fn get_docsis_wan(client: &Client) -> Result<Vec<DocsisWan>> {
 
 pub async fn get_downstream_info(client: &Client) -> Result<Vec<DownstreamChannel>> {
     let url = format!("{}/dsinfo.asp", BASE_URL);
+    debug!("Fetching downstream info from: {}", url);
+
     let response = client.get(&url).send().await?;
-    Ok(response.json().await?)
+    let bytes = response.bytes().await?;
+    let text = String::from_utf8_lossy(&bytes);
+    let channels: Vec<DownstreamChannel> = serde_json::from_str(&text)?;
+
+    debug!("Parsed {} downstream channels", channels.len());
+    Ok(channels)
 }
 
 pub async fn get_downstream_ofdm(client: &Client) -> Result<Vec<DownstreamOfdm>> {
@@ -185,8 +214,15 @@ pub async fn get_downstream_ofdm(client: &Client) -> Result<Vec<DownstreamOfdm>>
 
 pub async fn get_upstream_info(client: &Client) -> Result<Vec<UpstreamChannel>> {
     let url = format!("{}/usinfo.asp", BASE_URL);
+    debug!("Fetching upstream info from: {}", url);
+
     let response = client.get(&url).send().await?;
-    Ok(response.json().await?)
+    let bytes = response.bytes().await?;
+    let text = String::from_utf8_lossy(&bytes);
+    let channels: Vec<UpstreamChannel> = serde_json::from_str(&text)?;
+
+    debug!("Parsed {} upstream channels", channels.len());
+    Ok(channels)
 }
 
 pub async fn get_upstream_ofdm(client: &Client) -> Result<Vec<UpstreamOfdm>> {

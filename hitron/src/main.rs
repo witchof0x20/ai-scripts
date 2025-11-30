@@ -1,5 +1,6 @@
 mod api;
 mod discord;
+mod monitor;
 
 use anyhow::Result;
 use clap::Parser;
@@ -28,6 +29,30 @@ struct Args {
     /// Path to state file for tracking last seen event (optional)
     #[arg(short, long)]
     state_file: Option<PathBuf>,
+
+    /// Minimum acceptable downstream SNR in dB
+    #[arg(long, default_value = "33.0")]
+    downstream_snr_min: f64,
+
+    /// Minimum acceptable downstream signal strength in dBmV
+    #[arg(long, default_value = "-9.0")]
+    downstream_signal_min: f64,
+
+    /// Maximum acceptable downstream signal strength in dBmV
+    #[arg(long, default_value = "15.0")]
+    downstream_signal_max: f64,
+
+    /// Minimum acceptable upstream signal strength in dBmV
+    #[arg(long, default_value = "37.0")]
+    upstream_signal_min: f64,
+
+    /// Maximum acceptable upstream signal strength in dBmV
+    #[arg(long, default_value = "53.0")]
+    upstream_signal_max: f64,
+
+    /// Alert if uncorrectable errors increase by this amount between polls
+    #[arg(long, default_value = "100")]
+    uncorrectable_error_increase: i64,
 }
 
 /// Load the last seen event timestamp from the state file
@@ -87,6 +112,17 @@ async fn main() -> Result<()> {
 
     // Load last seen event timestamp from state file
     let mut last_seen_timestamp = load_last_seen_timestamp(&args.state_file).await;
+
+    // Initialize channel monitoring
+    let thresholds = monitor::ChannelThresholds {
+        downstream_snr_min: args.downstream_snr_min,
+        downstream_signal_min: args.downstream_signal_min,
+        downstream_signal_max: args.downstream_signal_max,
+        upstream_signal_min: args.upstream_signal_min,
+        upstream_signal_max: args.upstream_signal_max,
+        uncorrectable_error_increase: args.uncorrectable_error_increase,
+    };
+    let mut channel_state = monitor::ChannelState::new();
 
     // On startup, send new events since last run
     match api::get_event_log(&client).await {
@@ -190,6 +226,41 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 error!("Failed to fetch event log: {}", e);
+            }
+        }
+
+        // Check channel status for anomalies
+        let mut anomalies = Vec::new();
+
+        // Check downstream channels
+        match api::get_downstream_info(&client).await {
+            Ok(channels) => {
+                let downstream_anomalies = monitor::check_downstream_channels(&channels, &mut channel_state, &thresholds);
+                anomalies.extend(downstream_anomalies);
+            }
+            Err(e) => {
+                error!("Failed to fetch downstream channel info: {}", e);
+            }
+        }
+
+        // Check upstream channels
+        match api::get_upstream_info(&client).await {
+            Ok(channels) => {
+                let upstream_anomalies = monitor::check_upstream_channels(&channels, &mut channel_state, &thresholds);
+                anomalies.extend(upstream_anomalies);
+            }
+            Err(e) => {
+                error!("Failed to fetch upstream channel info: {}", e);
+            }
+        }
+
+        // Send Discord notifications for anomalies
+        if !anomalies.is_empty() {
+            info!("Detected {} channel anomal{}", anomalies.len(), if anomalies.len() == 1 { "y" } else { "ies" });
+            for anomaly in &anomalies {
+                if let Err(e) = notifier.send_channel_alert(anomaly).await {
+                    error!("Failed to send channel alert: {}", e);
+                }
             }
         }
     }

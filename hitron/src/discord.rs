@@ -4,6 +4,7 @@ use serenity::model::webhook::Webhook;
 use serenity::builder::ExecuteWebhook;
 use serenity::all::CreateEmbed;
 use crate::api::EventLog;
+use crate::monitor::ChannelAnomaly;
 
 pub struct DiscordNotifier {
     webhook: Webhook,
@@ -84,6 +85,34 @@ impl DiscordNotifier {
         for embed in embeds {
             builder = builder.embed(embed);
         }
+
+        // Add role mention if specified
+        if let Some(role_id) = self.role_id {
+            builder = builder.content(format!("<@&{}>", role_id));
+        }
+
+        self.webhook.execute(&self.http, false, builder).await?;
+
+        Ok(())
+    }
+
+    /// Send a channel anomaly alert to Discord
+    pub async fn send_channel_alert(&self, anomaly: &ChannelAnomaly) -> Result<()> {
+        // Determine color and title based on anomaly type
+        let (color, title) = match anomaly {
+            ChannelAnomaly::DownstreamLowSNR { .. } => (0xFFA500, "⚠️ Low SNR Detected"),
+            ChannelAnomaly::DownstreamSignalOutOfRange { .. } => (0xFFA500, "⚠️ Downstream Signal Out of Range"),
+            ChannelAnomaly::UpstreamSignalOutOfRange { .. } => (0xFFA500, "⚠️ Upstream Signal Out of Range"),
+            ChannelAnomaly::UncorrectableErrorIncrease { .. } => (0xFF0000, "🔴 Uncorrectable Errors Increased"),
+        };
+
+        let embed = CreateEmbed::new()
+            .title(title)
+            .color(color)
+            .description(anomaly.to_string())
+            .timestamp(serenity::model::Timestamp::now());
+
+        let mut builder = ExecuteWebhook::new().embed(embed);
 
         // Add role mention if specified
         if let Some(role_id) = self.role_id {

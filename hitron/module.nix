@@ -28,6 +28,42 @@ in
       example = 123456789012345678;
       description = "Discord role ID to ping when events occur (optional)";
     };
+
+    downstreamSnrMin = mkOption {
+      type = types.float;
+      default = 33.0;
+      description = "Minimum acceptable downstream SNR in dB (DOCSIS 3.0/3.1 recommendation: 33)";
+    };
+
+    downstreamSignalMin = mkOption {
+      type = types.float;
+      default = -9.0;
+      description = "Minimum acceptable downstream signal strength in dBmV";
+    };
+
+    downstreamSignalMax = mkOption {
+      type = types.float;
+      default = 15.0;
+      description = "Maximum acceptable downstream signal strength in dBmV";
+    };
+
+    upstreamSignalMin = mkOption {
+      type = types.float;
+      default = 37.0;
+      description = "Minimum acceptable upstream signal strength in dBmV";
+    };
+
+    upstreamSignalMax = mkOption {
+      type = types.float;
+      default = 53.0;
+      description = "Maximum acceptable upstream signal strength in dBmV";
+    };
+
+    uncorrectableErrorIncrease = mkOption {
+      type = types.int;
+      default = 100;
+      description = "Alert if uncorrectable errors increase by this amount between polls";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -46,7 +82,13 @@ in
           let
             args = [ "--interval" (toString cfg.pollInterval) ]
               ++ (optionals (cfg.roleId != null) [ "--role" (toString cfg.roleId) ])
-              ++ [ "--state-file" "%S/hitron-monitor/last-index" ];
+              ++ [ "--state-file" "%S/hitron-monitor/last-index" ]
+              ++ [ "--downstream-snr-min" (toString cfg.downstreamSnrMin) ]
+              ++ [ "--downstream-signal-min" (toString cfg.downstreamSignalMin) ]
+              ++ [ "--downstream-signal-max" (toString cfg.downstreamSignalMax) ]
+              ++ [ "--upstream-signal-min" (toString cfg.upstreamSignalMin) ]
+              ++ [ "--upstream-signal-max" (toString cfg.upstreamSignalMax) ]
+              ++ [ "--uncorrectable-error-increase" (toString cfg.uncorrectableErrorIncrease) ];
             argString = concatStringsSep " " args;
           in
           "${hitron-monitor}/bin/hitron-monitor ${argString}";
