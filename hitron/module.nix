@@ -45,11 +45,13 @@ in
         ExecStart =
           let
             args = [ "--interval" (toString cfg.pollInterval) ]
-              ++ (optionals (cfg.roleId != null) [ "--role" (toString cfg.roleId) ]);
+              ++ (optionals (cfg.roleId != null) [ "--role" (toString cfg.roleId) ])
+              ++ [ "--state-file" "%S/hitron-monitor/last-index" ];
             argString = concatStringsSep " " args;
           in
           "${hitron-monitor}/bin/hitron-monitor ${argString}";
         DynamicUser = true;
+        StateDirectory = "hitron-monitor";
 
         # Security hardening
         NoNewPrivileges = true;
