@@ -8,7 +8,7 @@ pub struct ChannelThresholds {
     pub downstream_signal_max: f64,
     pub upstream_signal_min: f64,
     pub upstream_signal_max: f64,
-    pub uncorrectable_error_increase: i64,
+    pub error_rate_threshold: f64,
 }
 
 impl Default for ChannelThresholds {
@@ -20,7 +20,7 @@ impl Default for ChannelThresholds {
             downstream_signal_max: 15.0,        // Adjusted based on your modem
             upstream_signal_min: 37.0,          // Adjusted based on your modem
             upstream_signal_max: 53.0,          // Adjusted based on your modem
-            uncorrectable_error_increase: 100,  // Alert if uncorrectable errors increase by 100
+            error_rate_threshold: 0.01,         // Alert if uncorrectable/(corrected+uncorrectable) > 1%
         }
     }
 }
@@ -59,12 +59,12 @@ pub enum ChannelAnomaly {
         min: f64,
         max: f64,
     },
-    UncorrectableErrorIncrease {
+    HighErrorRate {
         channel_id: u32,
-        previous_errors: i64,
-        current_errors: i64,
-        increase: i64,
-        threshold: i64,
+        uncorrected_delta: i64,
+        corrected_delta: i64,
+        error_rate: f64,
+        threshold: f64,
     },
 }
 
@@ -80,9 +80,9 @@ impl std::fmt::Display for ChannelAnomaly {
             ChannelAnomaly::UpstreamSignalOutOfRange { channel_id, signal, min, max } => {
                 write!(f, "Upstream channel {} signal out of range: {:.1} dBmV (expected: {:.1} to {:.1} dBmV)", channel_id, signal, min, max)
             }
-            ChannelAnomaly::UncorrectableErrorIncrease { channel_id, previous_errors, current_errors, increase, threshold } => {
-                write!(f, "Channel {} uncorrectable errors increased: {} → {} (+{}, threshold: {})",
-                    channel_id, previous_errors, current_errors, increase, threshold)
+            ChannelAnomaly::HighErrorRate { channel_id, uncorrected_delta, corrected_delta, error_rate, threshold } => {
+                write!(f, "Channel {} high error rate: {:.2}% (uncorrected: +{}, corrected: +{}, threshold: {:.2}%)",
+                    channel_id, error_rate * 100.0, uncorrected_delta, corrected_delta, threshold * 100.0)
             }
         }
     }
@@ -117,17 +117,25 @@ pub fn check_downstream_channels(
             });
         }
 
-        // Check for uncorrectable error increases
+        // Check for high error rates
         if let Some(prev) = state.previous_downstream.get(&channel.channel_id) {
-            let error_increase = channel.uncorrect - prev.uncorrect;
-            if error_increase > thresholds.uncorrectable_error_increase {
-                anomalies.push(ChannelAnomaly::UncorrectableErrorIncrease {
-                    channel_id: channel.channel_id,
-                    previous_errors: prev.uncorrect,
-                    current_errors: channel.uncorrect,
-                    increase: error_increase,
-                    threshold: thresholds.uncorrectable_error_increase,
-                });
+            let uncorrected_delta = channel.uncorrect - prev.uncorrect;
+            let corrected_delta = channel.correcteds - prev.correcteds;
+
+            // Only check if there were new errors in this interval
+            if uncorrected_delta > 0 || corrected_delta > 0 {
+                let total_errors = uncorrected_delta + corrected_delta;
+                let error_rate = uncorrected_delta as f64 / total_errors as f64;
+
+                if error_rate > thresholds.error_rate_threshold {
+                    anomalies.push(ChannelAnomaly::HighErrorRate {
+                        channel_id: channel.channel_id,
+                        uncorrected_delta,
+                        corrected_delta,
+                        error_rate,
+                        threshold: thresholds.error_rate_threshold,
+                    });
+                }
             }
         }
 

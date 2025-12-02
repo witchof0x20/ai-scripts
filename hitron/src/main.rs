@@ -50,9 +50,9 @@ struct Args {
     #[arg(long, default_value = "53.0")]
     upstream_signal_max: f64,
 
-    /// Alert if uncorrectable errors increase by this amount between polls
-    #[arg(long, default_value = "100")]
-    uncorrectable_error_increase: i64,
+    /// Alert if error rate (uncorrected/(corrected+uncorrected)) exceeds this threshold (0.01 = 1%)
+    #[arg(long, default_value = "0.01")]
+    error_rate_threshold: f64,
 }
 
 /// Load the last seen event timestamp from the state file
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
         downstream_signal_max: args.downstream_signal_max,
         upstream_signal_min: args.upstream_signal_min,
         upstream_signal_max: args.upstream_signal_max,
-        uncorrectable_error_increase: args.uncorrectable_error_increase,
+        error_rate_threshold: args.error_rate_threshold,
     };
     let mut channel_state = monitor::ChannelState::new();
 

@@ -62,7 +62,7 @@ impl DiscordNotifier {
             ChannelAnomaly::DownstreamLowSNR { .. } => (0xFFA500, "⚠️ Low SNR Detected"),
             ChannelAnomaly::DownstreamSignalOutOfRange { .. } => (0xFFA500, "⚠️ Downstream Signal Out of Range"),
             ChannelAnomaly::UpstreamSignalOutOfRange { .. } => (0xFFA500, "⚠️ Upstream Signal Out of Range"),
-            ChannelAnomaly::UncorrectableErrorIncrease { .. } => (0xFF0000, "🔴 Uncorrectable Errors Increased"),
+            ChannelAnomaly::HighErrorRate { .. } => (0xFF0000, "🔴 High Error Rate Detected"),
         };
 
         let embed = CreateEmbed::new()
