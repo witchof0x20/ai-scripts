@@ -59,10 +59,10 @@ in
       description = "Maximum acceptable upstream signal strength in dBmV";
     };
 
-    uncorrectableErrorIncrease = mkOption {
-      type = types.int;
-      default = 100;
-      description = "Alert if uncorrectable errors increase by this amount between polls";
+    errorRateThreshold = mkOption {
+      type = types.float;
+      default = 0.01;
+      description = "Alert if error rate (uncorrected/(corrected+uncorrected)) exceeds this threshold (0.01 = 1%)";
     };
   };
 
@@ -88,7 +88,7 @@ in
               ++ [ "--downstream-signal-max=${toString cfg.downstreamSignalMax}" ]
               ++ [ "--upstream-signal-min=${toString cfg.upstreamSignalMin}" ]
               ++ [ "--upstream-signal-max=${toString cfg.upstreamSignalMax}" ]
-              ++ [ "--uncorrectable-error-increase=${toString cfg.uncorrectableErrorIncrease}" ];
+              ++ [ "--error-rate-threshold=${toString cfg.errorRateThreshold}" ];
             argString = concatStringsSep " " args;
           in
           "${hitron-monitor}/bin/hitron-monitor ${argString}";
