@@ -70,7 +70,6 @@ pub enum ChannelAnomaly {
     HighErrorRate {
         threshold: f64,
         triggered_channels: Vec<ChannelErrorStats>,
-        all_channel_stats: Vec<ChannelErrorStats>,
     },
 }
 
@@ -86,18 +85,11 @@ impl std::fmt::Display for ChannelAnomaly {
             ChannelAnomaly::UpstreamSignalOutOfRange { channel_id, signal, min, max } => {
                 write!(f, "Upstream channel {} signal out of range: {:.1} dBmV (expected: {:.1} to {:.1} dBmV)", channel_id, signal, min, max)
             }
-            ChannelAnomaly::HighErrorRate { threshold, triggered_channels, all_channel_stats } => {
+            ChannelAnomaly::HighErrorRate { threshold, triggered_channels } => {
                 write!(f, "High error rate detected on {} channel(s) (threshold: {:.2}%)\n\n",
                     triggered_channels.len(), threshold * 100.0)?;
 
-                write!(f, "**Channels exceeding threshold:**\n")?;
                 for stats in triggered_channels {
-                    write!(f, "• Channel {}: {:.2}% error rate (uncorrected: +{}, corrected: +{})\n",
-                        stats.channel_id, stats.error_rate * 100.0, stats.uncorrected_delta, stats.corrected_delta)?;
-                }
-
-                write!(f, "\n**All channel error stats:**\n")?;
-                for stats in all_channel_stats {
                     write!(f, "• Channel {}: {:.2}% error rate (uncorrected: +{}, corrected: +{})\n",
                         stats.channel_id, stats.error_rate * 100.0, stats.uncorrected_delta, stats.corrected_delta)?;
                 }
@@ -115,8 +107,7 @@ pub fn check_downstream_channels(
 ) -> Vec<ChannelAnomaly> {
     let mut anomalies = Vec::new();
 
-    // Collect error stats for all channels
-    let mut all_channel_stats = Vec::new();
+    // Collect error stats for channels that exceed the threshold
     let mut triggered_channels = Vec::new();
 
     for channel in channels {
@@ -151,17 +142,13 @@ pub fn check_downstream_channels(
                 let total_errors = uncorrected_delta + corrected_delta;
                 let error_rate = uncorrected_delta as f64 / total_errors as f64;
 
-                let stats = ChannelErrorStats {
-                    channel_id: channel.channel_id,
-                    uncorrected_delta,
-                    corrected_delta,
-                    error_rate,
-                };
-
-                all_channel_stats.push(stats.clone());
-
                 if error_rate > thresholds.error_rate_threshold {
-                    triggered_channels.push(stats);
+                    triggered_channels.push(ChannelErrorStats {
+                        channel_id: channel.channel_id,
+                        uncorrected_delta,
+                        corrected_delta,
+                        error_rate,
+                    });
                 }
             }
         }
@@ -170,12 +157,11 @@ pub fn check_downstream_channels(
         state.previous_downstream.insert(channel.channel_id, channel.clone());
     }
 
-    // If any channel triggered the error threshold, create a single anomaly with all stats
+    // If any channel triggered the error threshold, create a single anomaly
     if !triggered_channels.is_empty() {
         anomalies.push(ChannelAnomaly::HighErrorRate {
             threshold: thresholds.error_rate_threshold,
             triggered_channels,
-            all_channel_stats,
         });
     }
 
