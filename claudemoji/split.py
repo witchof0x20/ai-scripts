@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Split claudespinny.png into 4 non-overlapping SVG layers for multi-filament 3D printing.
+"""Split emoji PNGs into 4 non-overlapping SVG layers for multi-filament 3D printing.
 
-Produces:
+For each input image, produces an output directory containing:
   outline.svg  - Black outline around the petals
   flower.svg   - Orange/terracotta petal fill
   middle.svg   - White center circle
   face.svg     - Black spiral eyes and wavy mouth
+
+Usage:
+  split.py input1.png output1/ [input2.png output2/ ...]
 """
 
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -158,13 +162,9 @@ def run_potrace(pbm_path: Path, svg_path: Path):
     svg_path.write_text(svg_text)
 
 
-def main():
-    script_dir = Path(__file__).parent
-    input_path = script_dir / "claudespinny.png"
-
-    if not input_path.exists():
-        print(f"Error: {input_path} not found", file=sys.stderr)
-        sys.exit(1)
+def process_image(input_path: Path, output_dir: Path):
+    """Process a single emoji image into 4 SVG layers."""
+    print(f"\n=== Processing {input_path} -> {output_dir}/ ===")
 
     print("Loading image...")
     img = Image.open(input_path).convert("RGBA")
@@ -195,6 +195,8 @@ def main():
     layer_names = ["outline", "flower", "middle", "face"]
     layer_masks = [outline_mask, orange_mask, middle_mask, face_mask]
 
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
@@ -203,15 +205,41 @@ def main():
             print(f"  {name}: {count} pixels")
 
             pbm_path = tmpdir / f"{name}.ppm"
-            svg_path = script_dir / f"{name}.svg"
+            svg_path = output_dir / f"{name}.svg"
 
             mask_to_pbm(mask, pbm_path)
             run_potrace(pbm_path, svg_path)
             print(f"  -> {svg_path}")
 
-    print("Done! Produced 4 SVGs:")
-    for name in layer_names:
-        print(f"  {name}.svg")
+    print(f"Done! Produced 4 SVGs in {output_dir}/")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Split emoji PNGs into SVG layers for multi-filament 3D printing."
+    )
+    parser.add_argument(
+        "pairs",
+        nargs="+",
+        metavar="INPUT OUTPUT_DIR",
+        help="Alternating input PNG and output directory paths",
+    )
+    args = parser.parse_args()
+
+    if len(args.pairs) % 2 != 0:
+        parser.error("Arguments must be pairs of INPUT_PNG OUTPUT_DIR")
+
+    pairs = list(zip(args.pairs[::2], args.pairs[1::2]))
+
+    for input_str, output_str in pairs:
+        input_path = Path(input_str)
+        output_dir = Path(output_str)
+
+        if not input_path.exists():
+            print(f"Error: {input_path} not found", file=sys.stderr)
+            sys.exit(1)
+
+        process_image(input_path, output_dir)
 
 
 if __name__ == "__main__":
