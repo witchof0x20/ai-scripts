@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Split emoji PNGs into 4 non-overlapping SVG layers for multi-filament 3D printing.
+"""Split emoji PNGs into 4 SVG layers for multi-filament 3D printing.
 
 For each input image, produces an output directory containing:
   outline.svg  - Black outline around the petals
@@ -8,7 +8,7 @@ For each input image, produces an output directory containing:
   face.svg     - Black spiral eyes and wavy mouth
 
 Usage:
-  split.py input1.png output1/ [input2.png output2/ ...]
+  split.py [--size-mm 50] [--dilation-mm 0.1] input1.png output1/ [input2.png output2/ ...]
 """
 
 import argparse
@@ -129,19 +129,28 @@ def mask_to_pbm(mask: np.ndarray, path: Path):
     img.save(path, format="PPM")
 
 
-def run_potrace(pbm_path: Path, svg_path: Path):
+def dilate_mask(mask: np.ndarray, pixels: int) -> np.ndarray:
+    """Dilate a boolean mask by the given number of pixels."""
+    if pixels <= 0:
+        return mask
+    return ndimage.binary_dilation(mask, iterations=pixels)
+
+
+def run_potrace(pbm_path: Path, svg_path: Path, size_mm: float | None):
     """Run potrace to convert a bitmap to SVG, with a full-canvas bounding rect."""
-    subprocess.run(
-        [
-            "potrace",
-            "--svg",
-            "--invert",
-            "--output", str(svg_path),
-            "--turdsize", "2",
-            str(pbm_path),
-        ],
-        check=True,
-    )
+    cmd = [
+        "potrace",
+        "--svg",
+        "--invert",
+        "--output", str(svg_path),
+        "--turdsize", "2",
+    ]
+    if size_mm is not None:
+        cmd += ["--width", f"{size_mm}mm"]
+    cmd.append(str(pbm_path))
+
+    subprocess.run(cmd, check=True)
+
     # Inject tiny filled squares at opposite canvas corners so slicers compute
     # consistent bounds across all layers. Without real geometry at the extremes,
     # slicers center based on path bounds, misaligning smaller layers.
@@ -162,16 +171,42 @@ def run_potrace(pbm_path: Path, svg_path: Path):
     svg_path.write_text(svg_text)
 
 
-def process_image(input_path: Path, output_dir: Path):
+def process_image(
+    input_path: Path,
+    output_dir: Path,
+    size_mm: float | None,
+    dilation_mm: float,
+    resolution_mm: float | None,
+):
     """Process a single emoji image into 4 SVG layers."""
     print(f"\n=== Processing {input_path} -> {output_dir}/ ===")
 
     print("Loading image...")
     img = Image.open(input_path).convert("RGBA")
+
+    # Downsample to match machine resolution if specified
+    if resolution_mm is not None and size_mm is not None:
+        target_px = round(size_mm / resolution_mm)
+        orig_w, orig_h = img.size
+        if orig_w > target_px or orig_h > target_px:
+            img = img.resize((target_px, target_px), Image.LANCZOS)
+            print(f"Resampled {orig_w}x{orig_h} -> {target_px}x{target_px} ({resolution_mm}mm resolution, {1 / resolution_mm:.0f} px/mm)")
+
     rgba = np.array(img)
     h, w = rgba.shape[:2]
 
     print(f"Image size: {w}x{h}")
+
+    # Convert dilation from mm to pixels
+    if size_mm is not None and dilation_mm > 0:
+        px_per_mm = w / size_mm
+        dilation_px = max(1, round(dilation_mm * px_per_mm))
+        print(f"Dilation: {dilation_mm}mm = {dilation_px}px (at {px_per_mm:.1f} px/mm)")
+    else:
+        dilation_px = 0
+
+    if size_mm is not None:
+        print(f"Output size: {size_mm}mm x {size_mm}mm")
 
     print("Classifying pixels...")
     classes = classify_pixels(rgba)
@@ -185,15 +220,14 @@ def process_image(input_path: Path, output_dir: Path):
     orange_mask = classes == 2
     middle_mask = classes == 3
 
-    # Verify non-overlap
-    layers = [outline_mask, orange_mask, middle_mask, face_mask]
-    total = sum(m.astype(int) for m in layers)
-    overlap = np.sum(total > 1)
-    if overlap > 0:
-        print(f"Warning: {overlap} pixels overlap between layers!", file=sys.stderr)
-
     layer_names = ["outline", "flower", "middle", "face"]
     layer_masks = [outline_mask, orange_mask, middle_mask, face_mask]
+
+    # Dilate each mask so adjacent layers overlap slightly, preventing
+    # gaps from potrace smoothing and slicer tolerances
+    if dilation_px > 0:
+        print(f"Dilating masks by {dilation_px}px...")
+        layer_masks = [dilate_mask(m, dilation_px) for m in layer_masks]
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -208,7 +242,7 @@ def process_image(input_path: Path, output_dir: Path):
             svg_path = output_dir / f"{name}.svg"
 
             mask_to_pbm(mask, pbm_path)
-            run_potrace(pbm_path, svg_path)
+            run_potrace(pbm_path, svg_path, size_mm)
             print(f"  -> {svg_path}")
 
     print(f"Done! Produced 4 SVGs in {output_dir}/")
@@ -217,6 +251,24 @@ def process_image(input_path: Path, output_dir: Path):
 def main():
     parser = argparse.ArgumentParser(
         description="Split emoji PNGs into SVG layers for multi-filament 3D printing."
+    )
+    parser.add_argument(
+        "--size-mm",
+        type=float,
+        default=50,
+        help="Output SVG square width in mm (default: 50)",
+    )
+    parser.add_argument(
+        "--dilation-mm",
+        type=float,
+        default=0.05,
+        help="Overlap dilation between layers in mm to prevent gaps (default: 0.05)",
+    )
+    parser.add_argument(
+        "--resolution-mm",
+        type=float,
+        default=None,
+        help="Machine resolution in mm (e.g. 0.05). Resamples input to match, reducing SVG complexity.",
     )
     parser.add_argument(
         "pairs",
@@ -239,7 +291,7 @@ def main():
             print(f"Error: {input_path} not found", file=sys.stderr)
             sys.exit(1)
 
-        process_image(input_path, output_dir)
+        process_image(input_path, output_dir, args.size_mm, args.dilation_mm, args.resolution_mm)
 
 
 if __name__ == "__main__":

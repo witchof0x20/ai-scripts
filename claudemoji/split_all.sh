@@ -19,4 +19,11 @@ if [ -z "$args" ]; then
 fi
 
 # shellcheck disable=SC2086
-python3 "$SCRIPT_DIR/split.py" $args
+python3 "$SCRIPT_DIR/split.py" "$@" $args
+
+# Build 3MF files from the SVG layers
+for png in "$INPUT_DIR"/*.png; do
+    [ -f "$png" ] || continue
+    name="$(basename "$png" .png)"
+    python3 "$SCRIPT_DIR/build_3mf.py" "$OUTPUT_DIR/$name" "$png"
+done
