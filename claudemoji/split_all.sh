@@ -21,9 +21,22 @@ fi
 # shellcheck disable=SC2086
 python3 "$SCRIPT_DIR/split.py" "$@" $args
 
-# Build 3MF files from the SVG layers
+# Detect faceless mode from args
+faceless=false
+for arg in "$@"; do
+    if [ "$arg" = "--faceless" ]; then
+        faceless=true
+        break
+    fi
+done
+
+# Build 3MF files
 for png in "$INPUT_DIR"/*.png; do
     [ -f "$png" ] || continue
     name="$(basename "$png" .png)"
-    python3 "$SCRIPT_DIR/build_3mf.py" "$OUTPUT_DIR/$name" "$png"
+    if [ "$faceless" = "true" ]; then
+        python3 "$SCRIPT_DIR/build_3mf.py" --faceless "$OUTPUT_DIR/$name" "$png"
+    else
+        python3 "$SCRIPT_DIR/build_3mf.py" "$OUTPUT_DIR/$name" "$png"
+    fi
 done

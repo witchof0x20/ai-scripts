@@ -39,6 +39,7 @@
           nativeBuildInputs = deps.hitron-monitor.nativeBuildInputs;
           src = ./hitron;
         };
+        packages.pdfhide = pkgs.callPackage ./pdfhide/default.nix { };
         packages.gradescope-api = pkgs.callPackage ./gradescope-utils/gradescope-api.nix { };
         devShells.ffxiv-otp = pkgs.mkShell {
           nativeBuildInputs = deps.ffxiv-otp.nativeBuildInputs ++ [
@@ -50,6 +51,13 @@
         devShells.gradescope-utils = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             (python3.withPackages (ps: [ packages.gradescope-api ]))
+          ];
+        };
+        devShells.claudemoji = pkgs.mkShell {
+          nativeBuildInputs = [
+            (pkgs.python3.withPackages (ps: with ps; [ pillow numpy scipy ]))
+            pkgs.potrace
+            pkgs.openscad
           ];
         };
       }

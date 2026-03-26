@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build a multi-color 3MF file from SVG layers produced by split.py.
 
-For each emoji directory containing outline.svg, flower.svg, middle.svg, face.svg,
-extrudes each layer via OpenSCAD and packages them into a single .3mf with
-per-triangle material assignments and a thumbnail.
+Supports two modes:
+  Normal:   Extrudes outline/flower/middle/face SVGs into a 3MF.
+  Faceless: Renders outline/flower/ring parts from an OpenSCAD file into a 3MF.
 
 Usage:
   build_3mf.py [--height-mm 2.0] output/<name>/ input/<name>.png
+  build_3mf.py --faceless output/<name>/ input/<name>.png
 """
 
 import argparse
@@ -32,6 +33,19 @@ MATERIALS = [
     ("Black", "#1A1A1A"),
     ("Orange", "#C67B5C"),
     ("White", "#FFFFFF"),
+]
+
+# Faceless mode: outline, flower, ring, bezel cover
+FACELESS_PARTS = [
+    ("outline", "#1A1A1A", 0),
+    ("flower", "#C67B5C", 1),
+    ("ring", "#1A1A1A", 0),
+    ("bezel_ring", "#C67B5C", 1),
+]
+
+FACELESS_MATERIALS = [
+    ("Black", "#1A1A1A"),
+    ("Orange", "#C67B5C"),
 ]
 
 
@@ -70,6 +84,24 @@ def svg_to_stl(svg_path: Path, stl_path: Path, height_mm: float, tmp_dir: Path):
     )
     if result.returncode != 0:
         print(f"OpenSCAD error for {svg_path.name}:", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+
+
+def scad_part_to_stl(scad_path: Path, part_name: str, stl_path: Path):
+    """Render a specific part from a .scad file to STL via OpenSCAD."""
+    result = subprocess.run(
+        [
+            "openscad", "--render",
+            "-D", f'part="{part_name}"',
+            "-o", str(stl_path),
+            str(scad_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"OpenSCAD error for part '{part_name}':", file=sys.stderr)
         print(result.stderr, file=sys.stderr)
         sys.exit(1)
 
@@ -167,11 +199,72 @@ def build_3mf(
         print("Error: no meshes produced", file=sys.stderr)
         sys.exit(1)
 
+    _write_3mf(output_path, objects, MATERIALS, thumbnail_path)
+
+    # Clean up source SVGs now that they're baked into the 3MF
+    for layer_name, _color, _mat_idx in LAYERS:
+        svg_path = layer_dir / f"{layer_name}.svg"
+        if svg_path.exists():
+            svg_path.unlink()
+            print(f"  Removed {svg_path.name}")
+
+
+def build_faceless_3mf(
+    layer_dir: Path,
+    thumbnail_path: Path,
+):
+    """Build a .3mf file from the faceless OpenSCAD file.
+
+    Renders outline, flower, and ring parts separately via OpenSCAD,
+    then packages them into a single 3MF with material assignments.
+    """
+    name = layer_dir.name
+    scad_path = layer_dir / f"{name}.scad"
+    output_path = layer_dir / f"{name}.3mf"
+
+    if not scad_path.exists():
+        print(f"Error: {scad_path} not found", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\n=== Building faceless 3MF: {output_path} ===")
+
+    objects = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+
+        for part_name, _color, mat_idx in FACELESS_PARTS:
+            stl_path = tmp_dir / f"{part_name}.stl"
+            print(f"  Rendering {part_name}...")
+            scad_part_to_stl(scad_path, part_name, stl_path)
+
+            vertices = parse_stl(stl_path)
+            num_tris = vertices.shape[0]
+            if num_tris == 0:
+                print(f"  Warning: {part_name} produced empty mesh", file=sys.stderr)
+                continue
+
+            print(f"  {part_name}: {num_tris} triangles")
+            objects.append((part_name, mat_idx, vertices))
+
+    if not objects:
+        print("Error: no meshes produced", file=sys.stderr)
+        sys.exit(1)
+
+    _write_3mf(output_path, objects, FACELESS_MATERIALS, thumbnail_path)
+
+
+def _write_3mf(
+    output_path: Path,
+    objects: list[tuple[str, int, np.ndarray]],
+    materials: list[tuple[str, str]],
+    thumbnail_path: Path,
+):
+    """Write a 3MF file from mesh objects with material assignments."""
     total_tris = sum(v.shape[0] for _, _, v in objects)
     print(f"  Total: {len(objects)} objects, {total_tris} triangles")
 
-    # Build 3MF XML
-    model_xml = _build_model_xml(objects)
+    model_xml = _build_model_xml(objects, materials)
 
     content_types = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -201,16 +294,10 @@ def build_3mf(
 
     print(f"  Done! {output_path.stat().st_size / 1024:.0f} KB")
 
-    # Clean up source SVGs now that they're baked into the 3MF
-    for layer_name, _color, _mat_idx in LAYERS:
-        svg_path = layer_dir / f"{layer_name}.svg"
-        if svg_path.exists():
-            svg_path.unlink()
-            print(f"  Removed {svg_path.name}")
-
 
 def _build_model_xml(
     objects: list[tuple[str, int, np.ndarray]],
+    materials: list[tuple[str, str]],
 ) -> str:
     """Build the 3D model XML for the 3MF.
 
@@ -228,7 +315,7 @@ def _build_model_xml(
     # Materials
     parts.append('  <resources>\n')
     parts.append('    <basematerials id="1">\n')
-    for mat_name, mat_color in MATERIALS:
+    for mat_name, mat_color in materials:
         parts.append(f'      <base name="{mat_name}" displaycolor="{mat_color}"/>\n')
     parts.append('    </basematerials>\n')
 
@@ -297,9 +384,14 @@ def main():
         help="Extrusion height in mm (default: 1.0)",
     )
     parser.add_argument(
+        "--faceless",
+        action="store_true",
+        help="Build from faceless OpenSCAD file (outline+flower+ring) instead of SVG layers.",
+    )
+    parser.add_argument(
         "layer_dir",
         type=Path,
-        help="Directory containing outline.svg, flower.svg, middle.svg, face.svg",
+        help="Directory containing SVG layers or .scad file",
     )
     parser.add_argument(
         "thumbnail",
@@ -315,7 +407,10 @@ def main():
         print(f"Error: {args.thumbnail} not found", file=sys.stderr)
         sys.exit(1)
 
-    build_3mf(args.layer_dir, args.thumbnail, args.height_mm)
+    if args.faceless:
+        build_faceless_3mf(args.layer_dir, args.thumbnail)
+    else:
+        build_3mf(args.layer_dir, args.thumbnail, args.height_mm)
 
 
 if __name__ == "__main__":
