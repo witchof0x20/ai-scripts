@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
-"""Attach a text file to a PDF as an embedded file."""
+"""Convert text to a PDF and embed it as an attachment in another PDF."""
 
 import argparse
+import io
+import os
 import sys
 
+import fpdf
 import pikepdf
 
 
+def text_to_pdf(text):
+    """Convert a string of text into a PDF byte stream."""
+    pdf = fpdf.FPDF()
+    pdf.add_page()
+    pdf.set_font("Courier", size=10)
+    pdf.multi_cell(0, 5, text)
+    return pdf.output()
+
+
 def main():
-    parser = argparse.ArgumentParser(prog="pdfhide", description="Attach a text file to a PDF")
+    parser = argparse.ArgumentParser(prog="pdfhide", description="Embed a text file as a PDF attachment inside a PDF")
     parser.add_argument("input", help="Input PDF file")
     parser.add_argument("output", help="Output PDF file")
     parser.add_argument(
@@ -16,15 +28,19 @@ def main():
         help="File to attach (default: stdin)",
     )
     parser.add_argument(
-        "-n", "--name", default="extra.txt",
-        help="Filename for the attachment (default: extra.txt)",
+        "-n", "--name", default="extra.pdf",
+        help="Filename for the attachment (default: extra.pdf)",
     )
     args = parser.parse_args()
 
-    data = args.file.read()
+    text = args.file.read().decode("utf-8", errors="replace")
+    embedded_pdf = text_to_pdf(text)
 
     with pikepdf.open(args.input) as pdf:
-        pdf.attachments[args.name] = data
+        filespec = pikepdf.AttachedFileSpec(
+            pdf, bytes(embedded_pdf), filename=args.name, mime_type="application/pdf",
+        )
+        pdf.attachments[args.name] = filespec
         pdf.save(args.output)
 
 
