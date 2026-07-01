@@ -43,9 +43,13 @@ impl DiscordNotifier {
 
         let mut builder = ExecuteWebhook::new().embed(embed);
 
-        // Add role mention if specified, but not for Notice level events
+        // Add role mention if specified, but only for events severe enough
+        // to warrant it (critical/warning) -- notice and other are FYI-only
         if let Some(role_id) = self.role_id {
-            if event.priority != crate::api::EventPriority::Notice {
+            if matches!(
+                event.priority,
+                crate::api::EventPriority::Critical | crate::api::EventPriority::Warning
+            ) {
                 builder = builder.content(format!("<@&{}>", role_id));
             }
         }
