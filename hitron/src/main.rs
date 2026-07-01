@@ -1,15 +1,16 @@
 mod api;
+mod dedup;
 mod discord;
 mod monitor;
 
 use anyhow::Result;
 use clap::Parser;
+use std::collections::HashSet;
 use std::time::Duration;
 use std::path::PathBuf;
 use tokio::time;
 use tokio::fs;
 use tracing::{info, error, debug, warn};
-use chrono::NaiveDateTime;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Monitor Hitron modem event logs and send notifications to Discord", long_about = None)]
@@ -26,7 +27,7 @@ struct Args {
     #[arg(short, long)]
     role: Option<u64>,
 
-    /// Path to state file for tracking last seen event (optional)
+    /// Path to state file for tracking already-seen events (optional)
     #[arg(short, long)]
     state_file: Option<PathBuf>,
 
@@ -55,22 +56,19 @@ struct Args {
     error_rate_threshold: f64,
 }
 
-/// Load the last seen event timestamp from the state file
-async fn load_last_seen_timestamp(state_file: &Option<PathBuf>) -> Option<NaiveDateTime> {
+/// Load the set of already-seen events from the state file
+async fn load_seen_events(state_file: &Option<PathBuf>) -> Option<HashSet<dedup::EventKey>> {
     let path = state_file.as_ref()?;
 
     match fs::read_to_string(path).await {
         Ok(contents) => {
-            match NaiveDateTime::parse_from_str(contents.trim(), "%m/%d/%y %H:%M:%S") {
-                Ok(timestamp) => {
-                    debug!("Loaded last seen timestamp: {}", timestamp);
-                    Some(timestamp)
-                }
-                Err(e) => {
-                    error!("Failed to parse state file: {}", e);
-                    None
-                }
+            let seen = dedup::parse_state(&contents);
+            match &seen {
+                Some(keys) => debug!("Loaded {} seen event(s) from state file", keys.len()),
+                // Covers the legacy format, which held a bare timestamp
+                None => info!("State file is not a seen-event list, starting fresh"),
             }
+            seen
         }
         Err(e) => {
             debug!("Could not read state file ({}), starting fresh", e);
@@ -79,18 +77,81 @@ async fn load_last_seen_timestamp(state_file: &Option<PathBuf>) -> Option<NaiveD
     }
 }
 
-/// Save the last seen event timestamp to the state file
-async fn save_last_seen_timestamp(state_file: &Option<PathBuf>, timestamp: &str) -> Result<()> {
+/// Save the set of already-seen events to the state file
+async fn save_seen_events(state_file: &Option<PathBuf>, seen: &HashSet<dedup::EventKey>) -> Result<()> {
     if let Some(path) = state_file {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
 
-        fs::write(path, timestamp).await?;
-        debug!("Saved last seen timestamp: {}", timestamp);
+        fs::write(path, dedup::serialize_state(seen)).await?;
+        debug!("Saved {} seen event(s)", seen.len());
     }
     Ok(())
+}
+
+/// Log a new event and forward it to Discord if it warrants a notification
+async fn report_event(event: &api::EventLog, notifier: &discord::DiscordNotifier) {
+    match event.parse_timestamp() {
+        // The modem stamps events logged before it syncs time-of-day with
+        // the Unix epoch in local time (e.g. "12/31/69 19:01:07"); they are
+        // reboot-window noise, so keep them out of Discord
+        Ok(ts) if dedup::is_pre_sync_timestamp(&ts) => {
+            error!(
+                "Ignoring pre-clock-sync event ('{}'): [{}] {} - {}",
+                event.time, event.priority, event.event_type, event.event
+            );
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => warn!("Failed to parse timestamp for event: {}", e),
+    }
+
+    info!("Event: [{}] {} - {}", event.priority, event.event_type, event.event);
+
+    // Only send non-Notice events to Discord webhook
+    if event.priority != api::EventPriority::Notice {
+        if let Err(e) = notifier.send_event(event).await {
+            error!("Failed to send event: {}", e);
+        }
+    }
+}
+
+/// Report events not seen on the previous poll, then persist the new snapshot
+async fn process_event_log(
+    events: &[api::EventLog],
+    seen: &mut Option<HashSet<dedup::EventKey>>,
+    notifier: &discord::DiscordNotifier,
+    state_file: &Option<PathBuf>,
+) {
+    match seen {
+        Some(keys) => {
+            let new_events = dedup::new_events(events, keys);
+            if !new_events.is_empty() {
+                info!("Found {} new event(s)", new_events.len());
+                for event in new_events {
+                    report_event(event, notifier).await;
+                }
+            }
+        }
+        // First run - report only the most recent event rather than
+        // replaying the modem's whole rolling log
+        None => match events.first() {
+            Some(most_recent) => {
+                info!("First run - reporting most recent event only");
+                report_event(most_recent, notifier).await;
+            }
+            None => info!("No events found on first run"),
+        },
+    }
+
+    *seen = Some(dedup::snapshot(events));
+    if let Some(keys) = seen {
+        if let Err(e) = save_seen_events(state_file, keys).await {
+            error!("Failed to save state: {}", e);
+        }
+    }
 }
 
 #[tokio::main]
@@ -110,8 +171,8 @@ async fn main() -> Result<()> {
         info!("State persistence enabled");
     }
 
-    // Load last seen event timestamp from state file
-    let mut last_seen_timestamp = load_last_seen_timestamp(&args.state_file).await;
+    // Load already-seen events from state file
+    let mut seen_events = load_seen_events(&args.state_file).await;
 
     // Initialize channel monitoring
     let thresholds = monitor::ChannelThresholds {
@@ -127,61 +188,7 @@ async fn main() -> Result<()> {
     // On startup, send new events since last run
     match api::get_event_log(&client).await {
         Ok(events) => {
-            if let Some(last_ts) = last_seen_timestamp {
-                // Find events newer than last seen
-                let new_events: Vec<_> = events.iter()
-                    .filter(|event| {
-                        match event.parse_timestamp() {
-                            Ok(ts) => ts > last_ts,
-                            Err(e) => {
-                                warn!("Failed to parse timestamp for event: {}", e);
-                                false
-                            }
-                        }
-                    })
-                    .collect();
-
-                if !new_events.is_empty() {
-                    info!("Found {} new event(s) since last run", new_events.len());
-                    for event in &new_events {
-                        info!("Event: [{}] {} - {}", event.priority, event.event_type, event.event);
-
-                        // Only send non-Notice events to Discord webhook
-                        if event.priority != api::EventPriority::Notice {
-                            if let Err(e) = notifier.send_event(event).await {
-                                error!("Failed to send event: {}", e);
-                            }
-                        }
-                    }
-                } else {
-                    info!("No new events since last run");
-                }
-            } else {
-                // First run - just send the most recent event
-                if let Some(most_recent) = events.first() {
-                    info!("First run - most recent event: [{}] {} - {}",
-                          most_recent.priority, most_recent.event_type, most_recent.event);
-
-                    // Only send non-Notice events to Discord webhook
-                    if most_recent.priority != api::EventPriority::Notice {
-                        if let Err(e) = notifier.send_event(most_recent).await {
-                            error!("Failed to send initial event: {}", e);
-                        }
-                    }
-                } else {
-                    info!("No events found on startup");
-                }
-            }
-
-            // Update last seen timestamp
-            if let Some(most_recent) = events.first() {
-                if let Ok(ts) = most_recent.parse_timestamp() {
-                    last_seen_timestamp = Some(ts);
-                    if let Err(e) = save_last_seen_timestamp(&args.state_file, &most_recent.time).await {
-                        error!("Failed to save state: {}", e);
-                    }
-                }
-            }
+            process_event_log(&events, &mut seen_events, &notifier, &args.state_file).await;
         }
         Err(e) => {
             error!("Failed to fetch initial event log: {}", e);
@@ -196,48 +203,7 @@ async fn main() -> Result<()> {
 
         match api::get_event_log(&client).await {
             Ok(current_events) => {
-                // Find new events
-                let new_events: Vec<_> = if let Some(last_ts) = last_seen_timestamp {
-                    // Filter events newer than last seen
-                    current_events.iter()
-                        .filter(|event| {
-                            match event.parse_timestamp() {
-                                Ok(ts) => ts > last_ts,
-                                Err(e) => {
-                                    warn!("Failed to parse timestamp for event: {}", e);
-                                    false
-                                }
-                            }
-                        })
-                        .collect()
-                } else {
-                    // No state - send all events
-                    current_events.iter().collect()
-                };
-
-                if !new_events.is_empty() {
-                    info!("Found {} new event(s)", new_events.len());
-                    for event in &new_events {
-                        info!("Event: [{}] {} - {}", event.priority, event.event_type, event.event);
-
-                        // Only send non-Notice events to Discord webhook
-                        if event.priority != api::EventPriority::Notice {
-                            if let Err(e) = notifier.send_event(event).await {
-                                error!("Failed to send event: {}", e);
-                            }
-                        }
-                    }
-                }
-
-                // Update last seen timestamp and save state
-                if let Some(most_recent) = current_events.first() {
-                    if let Ok(ts) = most_recent.parse_timestamp() {
-                        last_seen_timestamp = Some(ts);
-                        if let Err(e) = save_last_seen_timestamp(&args.state_file, &most_recent.time).await {
-                            error!("Failed to save state: {}", e);
-                        }
-                    }
-                }
+                process_event_log(&current_events, &mut seen_events, &notifier, &args.state_file).await;
             }
             Err(e) => {
                 error!("Failed to fetch event log: {}", e);
