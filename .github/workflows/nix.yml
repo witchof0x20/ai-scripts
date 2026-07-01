@@ -1,16 +1,74 @@
 name: Build
 on: push
+
 jobs:
-  build:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.packages.outputs.changes }}
+      nix: ${{ steps.nix.outputs.nix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: packages
+        with:
+          filters: |
+            cal-upload:
+              - 'cal-upload/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            reminder:
+              - 'reminder/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            ffxiv-otp:
+              - 'ffxiv-otp/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            hitron-monitor:
+              - 'hitron/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            hitron-modeminfo:
+              - 'hitron/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            pdfhide:
+              - 'pdfhide/**'
+              - 'flake.nix'
+              - 'flake.lock'
+            gradescope-api:
+              - 'gradescope-utils/**'
+              - 'flake.nix'
+              - 'flake.lock'
+      - uses: dorny/paths-filter@v3
+        id: nix
+        with:
+          filters: |
+            nix:
+              - '**/*.nix'
+              - 'flake.lock'
+
+  flake-check:
+    needs: changes
+    if: needs.changes.outputs.nix == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: nixbuild/nix-quick-install-action@v29
       - name: Check flake outputs
         run: nix flake check
-      - name: Build cal-upload 
-        run: nix build .#cal-upload
-      - name: Build reminder 
-        run: nix build .#reminder
-      - name: Build ffxiv-otp
-        run: nix build .#ffxiv-otp
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nixbuild/nix-quick-install-action@v29
+      - name: Build ${{ matrix.package }}
+        run: nix build .#${{ matrix.package }}
